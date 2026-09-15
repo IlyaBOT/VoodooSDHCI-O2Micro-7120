@@ -1,0 +1,52 @@
+name: Import driver recipe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/import-from-install-kit.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Import current driver worktree
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/install-kit
+          git clone --depth 1 --branch cardreader-o2micro-7120 \
+            https://github.com/IlyaBOT/Acer-Aspire-4310-MacOS-X-Leopard-Install-Kit.git \
+            /tmp/install-kit
+
+          rm -rf scripts/cardreader
+          mkdir -p scripts docs
+          cp -a /tmp/install-kit/scripts/cardreader scripts/cardreader
+          cp /tmp/install-kit/drivers/o2micro-7120/README.md docs/BRINGUP.md
+
+          cat > .gitignore <<'EOF'
+          .DS_Store
+          __pycache__/
+          *.pyc
+          cache/
+          output/
+          backup/
+          opencore-*.txt
+          EOF
+
+      - name: Commit imported recipe
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/cardreader docs/BRINGUP.md .gitignore
+          if git diff --cached --quiet; then
+            echo 'Nothing to import'
+            exit 0
+          fi
+          git commit -m 'driver: import O2Micro 1217:7120 recipe [migration-bot]'
+          git push
