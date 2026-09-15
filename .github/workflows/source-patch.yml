@@ -1,0 +1,83 @@
+name: O2Micro source patch check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/source-patch.yml'
+      - 'scripts/cardreader/**'
+      - 'docs/**'
+  pull_request:
+    paths:
+      - '.github/workflows/source-patch.yml'
+      - 'scripts/cardreader/**'
+      - 'docs/**'
+  workflow_dispatch:
+
+jobs:
+  patch-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare patched source
+        run: ./scripts/cardreader/prepare_o2micro_source.sh
+
+      - name: Validate conservative O2Micro changes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path('output/cardreader/VoodooSDHCI-O2Micro-7120')
+          cpp = (root / 'VoodooSDHC.cpp').read_text()
+          hdr = (root / 'VoodooSDHC.h').read_text()
+          plist = (root / 'Info.plist').read_text()
+
+          power_pos = cpp.find('if (!powerSD(slot))')
+          init_clock_pos = cpp.find('if (!calcClock(slot, 400000))')
+          broken_iolog_literal = re.search(r'IOLog\("[^"\n]*\n', cpp) is not None
+
+          checks = {
+              'PCI ID': '0x71201217' in plist,
+              'PIO': '#define USE_SDMA 0' in cpp,
+              'read-only': '#define READONLY_DRIVER\t1' in cpp,
+              'multiblock PIO': '#define USE_MULTIBLOCK\t1' in cpp,
+              'bounded 64KiB chunks': '#define O2_PIO_MAX_BLOCKS           128U' in cpp and 'UInt32 b = MIN(O2_PIO_MAX_BLOCKS, n);' in cpp,
+              '1-bit mode': '//#define WIDE_BUS_MODE\t1' in cpp,
+              'quiet normal build': '//#define __DEBUG__\t1' in cpp,
+              'failed-media state': 'kCardInitFailed' in hdr and 'kCardInitFailed' in cpp,
+              'command timeout': 'timeout AFTER CMD' in cpp,
+              'PIO data timeout': '#define SDHCI_DATA_TIMEOUT_US       3000000U' in cpp,
+              'PIO checks CMD17 result': 'if (!SDCommand(0, SD_READ_SINGLE_BLOCK' in cpp,
+              'CMD18 checked': 'if (!SDCommand(0, SD_READ_MULTIPLE_BLOCK' in cpp,
+              'CMD18 removal-aware': 'card removed during CMD18' in cpp,
+              'CMD18 bounded completion': 'CMD18 transfer-complete timeout' in cpp,
+              'PIO checks physical removal': 'card removed while waiting for PIO data' in cpp,
+              'PIO waits transfer complete': 'PIO transfer-complete timeout' in cpp,
+              'timeout requests remount': 'case kIOReturnTimeout:' in cpp and 'read path requires media remount' in cpp,
+              'remount timer kick': 'timerSrc->setTimeoutMS(10)' in cpp,
+              'slot powered down on removal': 'physical removal; resetting and powering slot down' in cpp,
+              'cold retry after failed reinit': 'first reinitialization failed; forcing cold slot retry' in cpp,
+              'reset timeout': 'reset timeout type=' in cpp,
+              'fixed interrupt wait': 'interrupt timeout mask=' in cpp,
+              'old infinite command wait removed': 'while(this->PCIRegP[slot]->PresentState & ComInhibitCMD);' not in cpp,
+              'old PIO busy loop removed': 'Stuck in while loop 1' not in cpp,
+              'old CMD18 double-wait removed': 'I/O error after command 18' not in cpp,
+              'waits for command complete': 'if (nis & CmdComplete)' in cpp,
+              'restores command status enables': 'NormalIntStatusEn |= (CmdComplete | ErrorInterrupt)' in cpp,
+              'v1/v2 clock divider': 'UInt16 encodedDiv' in cpp and 'encodedDiv | InternalClockEn | SDClockEn' in cpp,
+              'power before initial clock': 0 <= power_pos < init_clock_pos,
+              'generated IOLog strings stay single-line': not broken_iolog_literal,
+          }
+          for name, ok in checks.items():
+              print(f'{name}: {ok}')
+          if not all(checks.values()):
+              raise SystemExit(1)
+          PY
+
+      - name: Show source delta
+        run: |
+          git --no-pager diff --no-index \
+            cache/cardreader/VoodooSDHCI-upstream \
+            output/cardreader/VoodooSDHCI-O2Micro-7120 || test $? -eq 1
