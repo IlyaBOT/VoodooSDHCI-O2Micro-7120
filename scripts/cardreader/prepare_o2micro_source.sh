@@ -49,6 +49,9 @@ esac
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
+# Export exactly the tracked files from the pinned commit. Using git archive is
+# more reliable than copying the working tree on old macOS/BSD tar and guarantees
+# that bundle directories such as VoodooSDHC.xcodeproj are preserved.
 (
   cd "$OUT_DIR"
   git -C "$CACHE_DIR" archive "$UPSTREAM_COMMIT" | tar -xf -

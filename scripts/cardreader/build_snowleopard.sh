@@ -41,6 +41,10 @@ log "source directory: $SOURCE_DIR"
 log "project: $PROJECT_NAME"
 log "building i386 KEXT with Xcode 3.2 toolchain"
 
+# Xcode 3.2's xcodebuild is much more reliable when the project bundle is named
+# relative to the current working directory.  In particular, some 3.2 builds
+# reject an otherwise valid absolute -project path with the misleading error
+# "the project ... does not exist in this directory".
 (
   cd "$SOURCE_DIR"
   "$XCODEBUILD" \
@@ -75,6 +79,11 @@ MATCH="$(/usr/libexec/PlistBuddy -c 'Print :IOKitPersonalities:SD\ Card\ Host\ C
 printf '%s\n' "$MATCH"
 printf '%s\n' "$MATCH" | grep -q '0x71201217' || die "built KEXT does not match O2Micro 1217:7120"
 
+# Snow Leopard's kextutil validates ownership as well as linkage. Validate a
+# disposable root-owned copy so subsequent builds can still clean BUILD_DIR.
+# -n is important here: an older VoodooSDHC build may already be loaded, and a
+# normal kextutil invocation would try to load the new UUID and fail even though
+# the freshly built bundle itself is valid.
 STAGE="/tmp/VoodooSDHC-o2micro-validate.kext"
 sudo rm -rf "$STAGE"
 sudo cp -R "$KEXT" "$STAGE"
